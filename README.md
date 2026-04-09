@@ -40,9 +40,11 @@ AudienceState      — 消息可见性状态（控制消息路由目标）
 
 流式能力（`ModelAdapter::stream()`）已在 Anthropic 和 OpenAI Responses 适配器上实现。`StreamingLlmDriver` 支持纯文本流式场景；带工具调用的流式需开发者自行实现 Driver。
 
-## 内置 Driver
+## 内置 Driver（参考实现）
 
-- **`LlmDriver`** — 单轮内工具往返直到拿到正文，支持完整工具调用循环（最多 20 轮）
+框架通过 `AgentDriver` trait 定义执行策略，开发者可以完全替换。以下是框架附带的默认实现，可直接使用，也可作为自定义 Driver 的参考：
+
+- **`LlmDriver`** — 工具调用循环直到拿到正文（默认最多 20 轮，可自行实现替换）
 - **`StreamingLlmDriver`** — 优先消费 `stream()`，不含工具时走流式，含工具时自动 fallback
 - **`ExternalDriver`** — 透传最后一条入站消息，用于外部输入注入
 

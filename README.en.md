@@ -40,9 +40,11 @@ AudienceState      — Message visibility state (controls routing targets)
 
 Streaming (`ModelAdapter::stream()`) is implemented for both Anthropic and OpenAI Responses adapters. `StreamingLlmDriver` handles text-only streaming; streaming with tool calls requires a custom Driver implementation.
 
-## Built-in Drivers
+## Built-in Drivers (Reference Implementations)
 
-- **`LlmDriver`** — Tool-call loop within a single turn until a text response is produced (up to 20 rounds)
+The framework defines execution strategy via the `AgentDriver` trait — developers can replace it entirely. The following are default implementations shipped with the framework, usable as-is or as a reference for custom Drivers:
+
+- **`LlmDriver`** — Tool-call loop until a text response is produced (default cap of 20 rounds; replace with your own implementation to change this)
 - **`StreamingLlmDriver`** — Prefers `stream()` when no tools are present; falls back to `send()` otherwise
 - **`ExternalDriver`** — Passes through the last inbound message; useful for injecting external input
 
