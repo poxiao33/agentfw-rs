@@ -1,52 +1,52 @@
 # agentfw-rs
 
-**中文** | [English](README.en.md)
+[中文](README.md) | **English**
 
-`agentfw-rs` 是一个用 Rust 实现的 **Agent Runtime Core**，多智能体系统的底层执行内核。
+`agentfw-rs` is an **Agent Runtime Core** written in Rust — a low-level execution kernel for multi-agent systems.
 
-它只提供原子能力，不内置调度与编排。框架不预设"主代理 / 子代理 / 工作流"语义——谁先运行、谁后运行、串行还是并行，由上层应用自行决定。
+It provides only atomic capabilities, with no built-in scheduling or orchestration. The framework imposes no "main-agent / sub-agent / workflow" semantics. Who runs first, who runs next, sequential or parallel — all of that is decided by the application layer.
 
-## 设计理念
+## Design Philosophy
 
-| 原则 | 说明 |
-|------|------|
-| 一切参与者统一建模为 `Agent` | 无论是 LLM、外部系统还是人类输入，都是 Agent |
-| 一切通信统一建模为 `Message` | 消息是唯一的信息载体 |
-| 一切能力统一建模为 `Tool` | 工具是 Agent 与外部世界交互的唯一方式 |
-| 运行时策略统一由 `Resolver` 提供 | 模型选择、提示词、路由、历史——全部可替换 |
-| 框架只负责原子执行 | 执行一轮 + 应用效果 + 消息分发，不负责推进调度 |
+| Principle | Description |
+|-----------|-------------|
+| Every participant is an `Agent` | LLMs, external systems, and human input are all modeled uniformly |
+| Every communication is a `Message` | Messages are the sole information carrier |
+| Every capability is a `Tool` | Tools are the only way agents interact with the outside world |
+| Runtime policy is provided by `Resolver` | Model selection, prompts, routing, history — all replaceable |
+| The framework only handles atomic execution | One turn + apply effects + dispatch content; no scheduling |
 
-## 核心抽象
+## Core Abstractions
 
 ```
-AgentSpec          — 代理定义（id、driver、prompt_ref、model_ref）
-AgentDriver        — 代理执行策略（LlmDriver / StreamingLlmDriver / ExternalDriver）
-Message            — 消息（含 ContentBlock：Text / ToolCall / ToolResult / Image）
-ToolDefinition     — 工具定义（schema + executor）
-ResolverBundle     — 运行时解析器集合（model / prompt / tools / routes / memory）
-Runtime / Kernel   — 执行引擎（apply_effects + dispatch_content）
-HistoryStore       — 历史存储
-AudienceState      — 消息可见性状态（控制消息路由目标）
+AgentSpec          — Agent definition (id, driver, prompt_ref, model_ref)
+AgentDriver        — Execution strategy (LlmDriver / StreamingLlmDriver / ExternalDriver)
+Message            — Message (with ContentBlock: Text / ToolCall / ToolResult / Image)
+ToolDefinition     — Tool definition (schema + executor)
+ResolverBundle     — Runtime resolver set (model / prompt / tools / routes / memory)
+Runtime / Kernel   — Execution engine (apply_effects + dispatch_content)
+HistoryStore       — History storage
+AudienceState      — Message visibility state (controls routing targets)
 ```
 
-## 模型支持
+## Model Support
 
-| Provider 标识 | 说明 |
+| Provider ID | Description |
 |---|---|
 | `anthropic` / `anthropic-messages` | Anthropic Messages API |
 | `openai` / `openai-chat-completions` | OpenAI Chat Completions |
 | `openai-responses` | OpenAI Responses API |
-| `openai-compatible` | 任意 OpenAI 兼容接口 |
+| `openai-compatible` | Any OpenAI-compatible endpoint |
 
-流式能力（`ModelAdapter::stream()`）已在 Anthropic 和 OpenAI Responses 适配器上实现。`StreamingLlmDriver` 支持纯文本流式场景；带工具调用的流式需开发者自行实现 Driver。
+Streaming (`ModelAdapter::stream()`) is implemented for both Anthropic and OpenAI Responses adapters. `StreamingLlmDriver` handles text-only streaming; streaming with tool calls requires a custom Driver implementation.
 
-## 内置 Driver
+## Built-in Drivers
 
-- **`LlmDriver`** — 单轮内工具往返直到拿到正文，支持完整工具调用循环（最多 20 轮）
-- **`StreamingLlmDriver`** — 优先消费 `stream()`，不含工具时走流式，含工具时自动 fallback
-- **`ExternalDriver`** — 透传最后一条入站消息，用于外部输入注入
+- **`LlmDriver`** — Tool-call loop within a single turn until a text response is produced (up to 20 rounds)
+- **`StreamingLlmDriver`** — Prefers `stream()` when no tools are present; falls back to `send()` otherwise
+- **`ExternalDriver`** — Passes through the last inbound message; useful for injecting external input
 
-## 快速开始
+## Quick Start
 
 ```toml
 # Cargo.toml
@@ -57,11 +57,11 @@ agentfw-core = { path = "crates/agentfw-core" }
 ```rust
 use agentfw_core::{Kernel, LlmDriver, ResolverBundle};
 
-// 1. 构建 Kernel 并注册 Driver
+// 1. Build a Kernel and register a Driver
 let mut kernel = Kernel::new();
 kernel.register_driver("llm", Box::new(LlmDriver))?;
 
-// 2. 构建 ResolverBundle（model / prompt / tools / routes / memory）
+// 2. Build a ResolverBundle (model / prompt / tools / routes / memory)
 let resolvers = ResolverBundle::builder()
     .model(my_model_resolver)
     .prompt(my_prompt_resolver)
@@ -70,11 +70,11 @@ let resolvers = ResolverBundle::builder()
     .memory(my_memory_resolver)
     .build()?;
 
-// 3. 执行一轮
+// 3. Run one agent turn
 let messages = kernel.run_agent_turn(&session, &resolvers, &agent, &incoming).await?;
 ```
 
-也可以通过静态配置文件（TOML / JSON）驱动：
+You can also drive the kernel from a static config file (TOML / JSON):
 
 ```rust
 let config = StaticConfig::from_path("agent-lab.toml")?;
@@ -82,16 +82,16 @@ config.validate()?;
 let (mut kernel, resolvers) = Kernel::from_static_config(&config, &builtin_tools)?;
 ```
 
-## 目录结构
+## Directory Structure
 
 ```
 agentfw-rs/
 ├── crates/
-│   └── agentfw-core/       # 核心库
+│   └── agentfw-core/       # Core library
 │       └── src/
-│           ├── kernel.rs           # 执行内核
-│           ├── runtime.rs          # 运行时（apply_effects / dispatch_content）
-│           ├── resolver.rs         # Resolver trait 与 ResolverBundle
+│           ├── kernel.rs           # Execution kernel
+│           ├── runtime.rs          # Runtime (apply_effects / dispatch_content)
+│           ├── resolver.rs         # Resolver traits and ResolverBundle
 │           ├── default_drivers.rs  # LlmDriver / StreamingLlmDriver / ExternalDriver
 │           ├── model.rs            # ModelAdapter trait
 │           ├── anthropic_messages.rs
@@ -104,38 +104,38 @@ agentfw-rs/
 │           ├── config.rs           # StaticConfig / DeveloperConfig
 │           └── ...
 └── examples/
-    ├── minimal/                    # 最小示例：自定义 ModelAdapter
-    ├── multi_agent_static/         # 多代理静态配置
-    ├── history_transform/          # 历史变换钩子
-    └── three_agent_visibility/     # 三代理可见性控制
+    ├── minimal/                    # Minimal example: custom ModelAdapter
+    ├── multi_agent_static/         # Multi-agent static config
+    ├── history_transform/          # History transform hook
+    └── three_agent_visibility/     # Three-agent visibility control
 ```
 
-## 示例
+## Examples
 
 ```bash
-# 最小示例
+# Minimal
 cargo run -p minimal
 
-# 多代理
+# Multi-agent
 cargo run -p multi_agent_static
 
-# 历史变换
+# History transform
 cargo run -p history_transform
 
-# 三代理可见性
+# Three-agent visibility
 cargo run -p three_agent_visibility
 ```
 
-## 验证
+## Verification
 
 ```bash
 cargo check -q
 cargo test -q -p agentfw-core
 ```
 
-## 扩展指南
+## Extension Guide
 
-### 自定义 Driver
+### Custom Driver
 
 ```rust
 use agentfw_core::{AgentDriver, AgentTurnResult, RunEnv, AgentSpec, Message, FrameworkError};
@@ -152,13 +152,13 @@ impl AgentDriver for MyDriver {
     ) -> Result<AgentTurnResult, FrameworkError> {
         let (model, request, _tools) = env.resolvers.build_request(env.session, agent).await?;
         let response = model.send(request).await?;
-        // ... 自定义处理逻辑
+        // ... custom logic
         Ok(AgentTurnResult { outbound_content: vec![], effects: vec![], meta: Default::default() })
     }
 }
 ```
 
-### 自定义 ModelAdapter
+### Custom ModelAdapter
 
 ```rust
 use agentfw_core::{ModelAdapter, ModelCapabilities, ModelRequest, ModelResponse, FrameworkError};
@@ -172,13 +172,13 @@ impl ModelAdapter for MyAdapter {
         ModelCapabilities { supports_tools: true, supports_streaming: false, supports_images: false }
     }
     async fn send(&self, request: ModelRequest) -> Result<ModelResponse, FrameworkError> {
-        // 调用你的模型 API
+        // Call your model API
         todo!()
     }
 }
 ```
 
-## 文档
+## Documentation
 
 - [API Overview](docs/api-overview.md)
 - [Public API](docs/public-api.md)
