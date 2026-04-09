@@ -1,0 +1,15 @@
+[package]
+name = "minimal"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+agentfw-core = { path = "../../crates/agentfw-core" }
+async-trait.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true

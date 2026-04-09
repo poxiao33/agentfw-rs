@@ -1,0 +1,11 @@
+[package]
+name = "three_agent_visibility"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+agentfw-core = { path = "../../crates/agentfw-core" }
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true

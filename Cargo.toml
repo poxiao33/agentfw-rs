@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/agentfw-core",
+    "examples/minimal",
+    "examples/multi_agent_static",
+    "examples/history_transform",
+    "examples/three_agent_visibility",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+async-stream = "0.3"
+async-trait = "0.1"
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
+toml = "0.8"
