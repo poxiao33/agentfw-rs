@@ -1,6 +1,6 @@
 # agentfw-rs
 
-`agentfw-rs` 是一个实验性的 **Agent Runtime Core**，用 Rust 实现的多智能体系统底层内核。
+`agentfw-rs` 是一个用 Rust 实现的 **Agent Runtime Core**，多智能体系统的底层执行内核。
 
 它只提供原子能力，不内置调度与编排。框架不预设"主代理 / 子代理 / 工作流"语义——谁先运行、谁后运行、串行还是并行，由上层应用自行决定。
 
