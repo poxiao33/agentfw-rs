@@ -178,11 +178,6 @@ where
             }
             .commit_auto(SessionId::from(session.session_id.0.clone()));
 
-            // Write to recipient's history so they receive the message.
-            // Sender outbox is the caller's responsibility (via AppendHistory effect).
-            self.history
-                .append(&session.session_id.0, &target, vec![msg.clone()])?;
-
             messages.push(msg);
         }
         Ok(messages)

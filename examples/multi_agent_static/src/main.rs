@@ -64,32 +64,32 @@ fn main() {
 id = "demo"
 
 [[session.agents]]
-id = "agent:main"
-name = "main"
+id = "agent:source"
+name = "source"
 driver = "llm"
-prompt_ref = "main.prompt"
+prompt_ref = "source.prompt"
 model_ref = "echo.model"
 
 [[session.agents]]
-id = "agent:worker"
-name = "worker"
+id = "agent:receiver"
+name = "receiver"
 driver = "llm"
-prompt_ref = "worker.prompt"
+prompt_ref = "receiver.prompt"
 model_ref = "echo.model"
 
 [[session.routes]]
-from = "agent:main"
-to = "agent:worker"
+from = "agent:source"
+to = "agent:receiver"
 allow = true
 
 [[session.routes]]
-from = "agent:worker"
-to = "agent:main"
+from = "agent:receiver"
+to = "agent:source"
 allow = true
 
 [prompts]
-"main.prompt" = "you are main"
-"worker.prompt" = "you are worker"
+"source.prompt" = "you are source"
+"receiver.prompt" = "you are receiver"
 
 [[models]]
 key = "echo.model"
@@ -100,11 +100,11 @@ base_url = "http://localhost:0"
 [bindings]
 
 [[bindings.tools]]
-agent_id = "agent:main"
+agent_id = "agent:source"
 tool_ids = ["builtin.set_visible_to"]
 
 [[bindings.tools]]
-agent_id = "agent:worker"
+agent_id = "agent:receiver"
 tool_ids = ["builtin.set_visible_to"]
 "#,
     )
@@ -122,9 +122,9 @@ tool_ids = ["builtin.set_visible_to"]
     kernel
         .set_audience_state(
             "demo",
-            "agent:main",
+            "agent:source",
             agentfw_core::AudienceState {
-                visible_to: vec!["agent:worker".to_string()],
+                visible_to: vec!["agent:receiver".to_string()],
             },
         )
         .expect("set audience");
@@ -133,16 +133,16 @@ tool_ids = ["builtin.set_visible_to"]
         session_id: SessionId::from("demo"),
         metadata: serde_json::Value::Null,
     };
-    let main_agent = static_config
+    let source_agent = static_config
         .session
         .agents
         .iter()
-        .find(|agent| agent.id == "agent:main")
+        .find(|agent| agent.id == "agent:source")
         .cloned()
-        .expect("main agent");
+        .expect("source agent");
     let messages =
-        futures::executor::block_on(kernel.run_agent_turn(&session, &resolvers, &main_agent, &[]))
-            .expect("run main");
+        futures::executor::block_on(kernel.run_agent_turn(&session, &resolvers, &source_agent, &[]))
+            .expect("run source");
 
     println!(
         "multi-agent static example: {} configured agents, {} dispatched message(s)",

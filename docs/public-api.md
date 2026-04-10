@@ -47,6 +47,7 @@
 以下内容目前更适合视为默认实现或便捷实现，而不是“对外 API 契约”：
 
 - `LlmDriver`
+- `ToolLoopLlmDriver`
 - `StreamingLlmDriver`
 - `ExternalDriver`
 - `InMemoryRuntime`
@@ -235,7 +236,7 @@
   - OpenAI Responses API
   - Anthropic Messages
 - `OpenAICompatibleAdapter` 目前是兼容别名，而不是独立第四套语义。
-- 模型层已经具备可选 `stream()` 能力，但默认 `LlmDriver` 目前仍主要消费 `send()`；因此“流式模型适配能力”和“流式 Agent 驱动能力”应视为两个不同层次。
+- 模型层已经具备可选 `stream()` 能力；`StreamingLlmDriver` 只在纯文本场景优先消费 `stream()`，而不是把流式模型能力等同于“默认 Agent 驱动行为”。
 
 ---
 
@@ -254,7 +255,7 @@
 
 说明：
 
-当前默认 Driver（如 `LlmDriver`）的具体执行策略不应被视为框架规则，但 `AgentDriver` 这个抽象本身应保持稳定。
+当前默认 Driver（如 `LlmDriver` / `ToolLoopLlmDriver`）的具体执行策略不应被视为框架规则，但 `AgentDriver` 这个抽象本身应保持稳定。
 
 ---
 
@@ -399,6 +400,7 @@
 包括：
 
 - `LlmDriver`
+- `ToolLoopLlmDriver`
 - `ExternalDriver`
 - `InMemoryRuntime`
 - `InMemoryHistoryStore`

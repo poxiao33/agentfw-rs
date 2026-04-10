@@ -22,9 +22,10 @@
 
 这些是框架的核心执行抽象，宿主系统可以依赖。
 
-### 建议视为默认实现 / 实验性实现的
+### 建议视为默认实现 / 参考实现的
 
 - `LlmDriver`
+- `ToolLoopLlmDriver`
 - `StreamingLlmDriver`
 - `ExternalDriver`
 - `DefaultLlmDriver`
@@ -167,20 +168,33 @@ pub struct AgentTurnResult {
   - prompt
   - 历史
   - 工具
-- 发起模型请求
-- 若模型返回 tool call（工具调用）：
-  - 执行工具
-  - 把工具结果回填成 `MessageKind::Tool`
-  - 再次请求模型
-- 直到模型返回正文输出
+- 发起一次模型请求
+- 返回该次请求产生的：
+  - 正文内容
+  - 或工具调用内容块
 
 也就是说，当前默认 `LlmDriver` 是：
 
-> 一个“单轮内工具往返直到拿到正文”的便捷实现
+> 一个“单轮原子执行”的默认实现
 
-这不是坏事，但必须明确：
+它不会在 Driver 内部继续自动跑工具循环。
 
-**这只是默认实现，不代表框架要求所有 Driver 都这么做。**
+---
+
+### 3.2 `ToolLoopLlmDriver`
+
+路径：
+[default_drivers.rs](/Users/kang/Claude-works/agentCdp/agentfw-rs/crates/agentfw-core/src/default_drivers.rs)
+
+当前语义：
+
+- 单轮内执行“模型返回工具调用 -> 执行工具 -> 工具结果回填 -> 再次请求模型”的循环
+- 默认最多 20 轮
+- 开发者可显式配置覆盖最大轮数
+
+这说明：
+
+> `ToolLoopLlmDriver` 是一个便捷实现，而不是框架内核默认行为
 
 特别说明：
 
@@ -190,7 +204,7 @@ pub struct AgentTurnResult {
 
 ---
 
-### 3.2 `StreamingLlmDriver`
+### 3.3 `StreamingLlmDriver`
 
 路径：
 [default_drivers.rs](/Users/kang/Claude-works/agentCdp/agentfw-rs/crates/agentfw-core/src/default_drivers.rs)
@@ -203,7 +217,7 @@ pub struct AgentTurnResult {
   - 收集文本块
   - 记录停止信号
   - 记录最后一条原始事件
-- 如果模型不支持流式，或当前请求带工具，则自动回退到 `send()` 路径
+- 如果模型不支持流式，或当前请求带工具，则自动回退到 `ToolLoopLlmDriver` 路径
 - 如果流中出现 `ToolCall`，当前实现直接报协议错误，不做流式工具往返
 
 这说明：

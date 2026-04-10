@@ -61,25 +61,61 @@ impl AgentDriver for ExternalDriver {
     }
 }
 
-/// Default LLM driver implementation.
+/// Default single-step LLM driver implementation.
+///
+/// This driver performs exactly one model request for the turn and returns the
+/// normalized result. It does not execute tool loops internally.
 ///
 /// Host applications can replace this driver; framework semantics are defined
 /// by traits and resolvers, not by this default implementation.
 pub struct LlmDriver;
 pub type DefaultLlmDriver = LlmDriver;
 
+/// Optional convenience LLM driver that executes tool loops inside a single
+/// turn.
+///
+/// This preserves the previous batteries-included behavior for host
+/// applications that want a self-contained tool-using agent loop, but it is
+/// not the most minimal kernel behavior.
+pub struct ToolLoopLlmDriver;
+pub type DefaultToolLoopLlmDriver = ToolLoopLlmDriver;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ToolLoopDriverConfig {
+    pub max_tool_rounds: u32,
+}
+
+impl Default for ToolLoopDriverConfig {
+    fn default() -> Self {
+        Self {
+            max_tool_rounds: 20,
+        }
+    }
+}
+
+pub struct ConfigurableToolLoopLlmDriver {
+    config: ToolLoopDriverConfig,
+}
+
+impl ConfigurableToolLoopLlmDriver {
+    pub fn new(config: ToolLoopDriverConfig) -> Self {
+        Self { config }
+    }
+}
+
 /// Default streaming-first LLM driver implementation.
 ///
 /// This driver prefers `ModelAdapter::stream()` when the adapter supports
 /// streaming and the request does not include tools. Otherwise it falls back to
-/// the full `LlmDriver` behavior (including tool execution and effects).
+/// the full `ToolLoopLlmDriver` behavior (including tool execution and
+/// effects).
 ///
 /// # Effects
 ///
 /// The streaming path does not support tool calls and therefore produces no
 /// `RuntimeEffect`s. If the model or adapter does not support streaming, or if
-/// the request includes tools, this driver delegates to `LlmDriver` which does
-/// accumulate effects.
+/// the request includes tools, this driver delegates to `ToolLoopLlmDriver`
+/// which does accumulate effects.
 pub struct StreamingLlmDriver;
 pub type DefaultStreamingLlmDriver = StreamingLlmDriver;
 
@@ -96,9 +132,8 @@ struct LlmTurnRunner<'a> {
     /// Known agent IDs for this session, used to validate set_visible_to targets.
     /// Sourced from session.metadata["known_agents"] if present.
     known_agent_ids: Vec<String>,
+    max_tool_rounds: u32,
 }
-
-const MAX_TOOL_ROUNDS: u32 = 20;
 
 enum StepDisposition {
     Finished(AgentTurnResult),
@@ -107,6 +142,14 @@ enum StepDisposition {
 
 impl<'a> LlmTurnRunner<'a> {
     async fn create(env: RunEnv<'a>, agent: &'a AgentSpec) -> Result<Self, FrameworkError> {
+        Self::create_with_config(env, agent, ToolLoopDriverConfig::default()).await
+    }
+
+    async fn create_with_config(
+        env: RunEnv<'a>,
+        agent: &'a AgentSpec,
+        config: ToolLoopDriverConfig,
+    ) -> Result<Self, FrameworkError> {
         let (model, request, tools) = env.resolvers.build_request(env.session, agent).await?;
 
         let known_agent_ids: Vec<String> = env
@@ -131,15 +174,16 @@ impl<'a> LlmTurnRunner<'a> {
             tool_round: 0,
             accumulated_content: Vec::new(),
             known_agent_ids,
+            max_tool_rounds: config.max_tool_rounds.max(1),
         })
     }
 
     async fn run(mut self) -> Result<AgentTurnResult, FrameworkError> {
         loop {
-            if self.tool_round >= MAX_TOOL_ROUNDS {
+            if self.tool_round >= self.max_tool_rounds {
                 return Err(FrameworkError::Runtime(format!(
                     "agent {} exceeded maximum tool rounds ({})",
-                    self.agent_id, MAX_TOOL_ROUNDS
+                    self.agent_id, self.max_tool_rounds
                 )));
             }
             let step = self.request_step().await?;
@@ -348,6 +392,18 @@ fn finalize_turn(
     })
 }
 
+async fn build_single_step_request(
+    env: RunEnv<'_>,
+    agent: &AgentSpec,
+    incoming: &[Message],
+) -> Result<(SharedModelAdapter, ModelRequest), FrameworkError> {
+    let (model, mut request, _tools) = env.resolvers.build_request(env.session, agent).await?;
+    if !incoming.is_empty() {
+        request.messages.extend_from_slice(incoming);
+    }
+    Ok((model, request))
+}
+
 fn repair_tool_call(tool_call: ToolCall) -> ToolCall {
     if tool_call.arguments.is_null() {
         ToolCall {
@@ -391,9 +447,59 @@ impl AgentDriver for LlmDriver {
         &self,
         env: RunEnv<'_>,
         agent: &AgentSpec,
+        incoming: &[Message],
+    ) -> Result<AgentTurnResult, FrameworkError> {
+        let (model, request) = build_single_step_request(env, agent, incoming).await?;
+        let response = model.send(request).await?;
+        let step = DefaultProtocolNormalizer.normalize(response, &agent.id)?;
+
+        let mut outbound_content = step.outbound_content;
+        for tc in step.tool_calls {
+            outbound_content.push(ContentBlock::ToolCall {
+                tool_name: tc.tool_id,
+                arguments: tc.arguments,
+                call_id: Some(tc.call_id),
+            });
+        }
+
+        if outbound_content.is_empty() {
+            return Err(FrameworkError::Protocol(
+                "model returned neither outbound content nor tool calls".to_string(),
+            ));
+        }
+
+        Ok(AgentTurnResult {
+            outbound_content,
+            effects: Vec::new(),
+            meta: step.meta,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentDriver for ToolLoopLlmDriver {
+    async fn run_turn(
+        &self,
+        env: RunEnv<'_>,
+        agent: &AgentSpec,
         _incoming: &[Message],
     ) -> Result<AgentTurnResult, FrameworkError> {
         LlmTurnRunner::create(env, agent).await?.run().await
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentDriver for ConfigurableToolLoopLlmDriver {
+    async fn run_turn(
+        &self,
+        env: RunEnv<'_>,
+        agent: &AgentSpec,
+        _incoming: &[Message],
+    ) -> Result<AgentTurnResult, FrameworkError> {
+        LlmTurnRunner::create_with_config(env, agent, self.config)
+            .await?
+            .run()
+            .await
     }
 }
 

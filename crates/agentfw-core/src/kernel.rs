@@ -229,6 +229,7 @@ impl KernelBuilder {
 
     pub fn with_default_drivers(self) -> Result<Self, FrameworkError> {
         self.with_driver("llm".to_string(), Box::new(crate::LlmDriver))?
+            .with_driver("llm_tool_loop".to_string(), Box::new(crate::ToolLoopLlmDriver))?
             .with_driver("external".to_string(), Box::new(crate::ExternalDriver))
     }
 
@@ -585,7 +586,8 @@ mod tests {
 
     #[tokio::test]
     async fn kernel_run_agent_turn_applies_audience_effect_before_dispatch() {
-        let agent = AgentSpec::new("agent:exec", "exec", "llm", "exec.prompt", "tool.model");
+        let agent =
+            AgentSpec::new("agent:exec", "exec", "llm_tool_loop", "exec.prompt", "tool.model");
         let session = SessionState {
             session_id: SessionId::from("demo"),
             metadata: Value::Null,
@@ -636,7 +638,7 @@ mod tests {
         let mut kernel = Kernel::new();
         kernel
             .drivers
-            .register("llm".to_string(), Box::new(crate::LlmDriver))
+            .register("llm_tool_loop".to_string(), Box::new(crate::ToolLoopLlmDriver))
             .expect("register driver");
         kernel
             .audience_store_mut()
@@ -664,7 +666,8 @@ mod tests {
 
     #[tokio::test]
     async fn kernel_turn_steps_can_be_called_separately() {
-        let agent = AgentSpec::new("agent:exec", "exec", "llm", "exec.prompt", "tool.model");
+        let agent =
+            AgentSpec::new("agent:exec", "exec", "llm_tool_loop", "exec.prompt", "tool.model");
         let session = SessionState {
             session_id: SessionId::from("demo"),
             metadata: Value::Null,
@@ -700,7 +703,7 @@ mod tests {
         let mut kernel = Kernel::new();
         kernel
             .drivers
-            .register("llm".to_string(), Box::new(crate::LlmDriver))
+            .register("llm_tool_loop".to_string(), Box::new(crate::ToolLoopLlmDriver))
             .expect("register driver");
         kernel
             .audience_store_mut()

@@ -31,8 +31,8 @@
 
 补充：
 
-- 默认 `LlmDriver` 是便捷实现，会在单轮内处理“模型返回工具调用 -> 执行工具 -> 回填工具结果 -> 再请求模型”的往返，直到拿到正文或报错。
-- 如果开发者不希望使用这种默认语义，应自行提供 Driver 实现。
+- 默认 `LlmDriver` 是单轮原子执行实现：只做一次模型请求，不在内核里自动执行工具循环。
+- 如果开发者需要“模型返回工具调用 -> 执行工具 -> 回填工具结果 -> 再请求模型”的便捷路径，可显式选择 `ToolLoopLlmDriver`。
 
 ---
 
@@ -255,6 +255,7 @@ pub trait Runtime {
 
 - `apply_effects` 是运行时效果应用 helper。
 - `dispatch_content` 是把当前 Agent 一轮 `outbound_content` 按 AudienceState + RouteResolver 落成真正消息的官方分发 helper。
+- 它只负责生成可分发消息，不再隐式写入接收方历史；接收方是否、何时消费这些消息，完全由宿主系统决定。
 - 这两个接口不负责调度推进，不触发下一轮执行。
 - `dispatch_content` 已经是 `async`，因为运行时可能需要异步调用 `RouteResolver`。
 

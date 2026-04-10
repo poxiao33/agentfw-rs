@@ -132,8 +132,11 @@ tool_ids = ["builtin.set_visible_to"]
     let (mut kernel, mut resolvers) =
         Kernel::from_static_config(&static_config, &[set_visible_to_tool()]).expect("build kernel");
     kernel
-        .register_driver("llm".to_string(), Box::new(agentfw_core::LlmDriver))
-        .expect("register llm driver");
+        .register_driver(
+            "llm_tool_loop".to_string(),
+            Box::new(agentfw_core::ToolLoopLlmDriver),
+        )
+        .expect("register llm tool-loop driver");
     kernel
         .register_driver(
             "external".to_string(),

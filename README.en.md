@@ -2,9 +2,16 @@
 
 [中文](README.md) | **English**
 
-`agentfw-rs` is an **Agent Runtime Core** written in Rust — a low-level execution kernel for multi-agent systems.
+`agentfw-rs` is an **Agent Runtime Core** written in Rust — a low-level execution kernel for building multi-agent systems.
 
-It provides only atomic capabilities, with no built-in scheduling or orchestration. The framework imposes no "main-agent / sub-agent / workflow" semantics. Who runs first, who runs next, sequential or parallel — all of that is decided by the application layer.
+## What You Can Build With It
+
+- **Multi-LLM collaboration systems** — wire multiple LLM agents together to pass messages and complete tasks cooperatively
+- **Tool-calling pipelines** — build agents that automatically execute tools and feed results back to the model in a loop
+- **Hybrid agent systems** — model LLMs, external APIs, and human input uniformly as agents and compose them freely
+- **Streaming conversation apps** — use the built-in streaming driver to build real-time responsive dialogue systems
+- **Configurable agent labs** — rapidly prototype and debug multi-agent topologies via TOML/JSON static config
+- **Custom execution strategies** — implement your own Driver or ModelAdapter to plug in any model or execution logic
 
 ## Design Philosophy
 
@@ -14,13 +21,13 @@ It provides only atomic capabilities, with no built-in scheduling or orchestrati
 | Every communication is a `Message` | Messages are the sole information carrier |
 | Every capability is a `Tool` | Tools are the only way agents interact with the outside world |
 | Runtime policy is provided by `Resolver` | Model selection, prompts, routing, history — all replaceable |
-| The framework only handles atomic execution | One turn + apply effects + dispatch content; no scheduling |
+| The framework handles atomic execution | One turn + apply effects + dispatch content; scheduling and orchestration belong to the application layer |
 
 ## Core Abstractions
 
 ```
 AgentSpec          — Agent definition (id, driver, prompt_ref, model_ref)
-AgentDriver        — Execution strategy (LlmDriver / StreamingLlmDriver / ExternalDriver)
+AgentDriver        — Execution strategy (LlmDriver / ToolLoopLlmDriver / StreamingLlmDriver / ExternalDriver)
 Message            — Message (with ContentBlock: Text / ToolCall / ToolResult / Image)
 ToolDefinition     — Tool definition (schema + executor)
 ResolverBundle     — Runtime resolver set (model / prompt / tools / routes / memory)
@@ -38,13 +45,14 @@ AudienceState      — Message visibility state (controls routing targets)
 | `openai-responses` | OpenAI Responses API |
 | `openai-compatible` | Any OpenAI-compatible endpoint |
 
-Streaming (`ModelAdapter::stream()`) is implemented for both Anthropic and OpenAI Responses adapters. `StreamingLlmDriver` handles text-only streaming; streaming with tool calls requires a custom Driver implementation.
+Streaming (`ModelAdapter::stream()`) is implemented for both Anthropic and OpenAI Responses adapters. `StreamingLlmDriver` handles text-only streaming; streaming with tool calls can be implemented via a custom Driver.
 
 ## Built-in Drivers (Reference Implementations)
 
 The framework defines execution strategy via the `AgentDriver` trait — developers can replace it entirely. The following are default implementations shipped with the framework, usable as-is or as a reference for custom Drivers:
 
-- **`LlmDriver`** — Tool-call loop until a text response is produced (default cap of 20 rounds; replace with your own implementation to change this)
+- **`LlmDriver`** — Single-step execution: one model request, surfacing outbound text and tool calls as-is
+- **`ToolLoopLlmDriver`** — Executes a tool loop inside one turn (default cap of 20 rounds, configurable)
 - **`StreamingLlmDriver`** — Prefers `stream()` when no tools are present; falls back to `send()` otherwise
 - **`ExternalDriver`** — Passes through the last inbound message; useful for injecting external input
 
