@@ -57,6 +57,22 @@ impl ToolExecutor for SetVisibleToExecutor {
             visible_to: normalized,
         } = AudienceState::normalize(visible_to);
 
+        // If the caller injected a known_agents list, validate all targets against it.
+        if let Some(known) = call.meta.get("known_agents").and_then(Value::as_array) {
+            let known_set: std::collections::HashSet<&str> =
+                known.iter().filter_map(Value::as_str).collect();
+            if !known_set.is_empty() {
+                for target in &normalized {
+                    if !known_set.contains(target.as_str()) {
+                        return Err(FrameworkError::Tool(format!(
+                            "set_visible_to target '{}' is not a known agent in this session",
+                            target
+                        )));
+                    }
+                }
+            }
+        }
+
         Ok(ToolResult {
             status: ToolResultStatus::Success,
             summary: format!("audience updated for {}", call.requested_by),

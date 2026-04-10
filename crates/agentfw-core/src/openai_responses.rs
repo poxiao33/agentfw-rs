@@ -63,17 +63,21 @@ impl ModelAdapter for OpenAIResponsesAdapter {
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("request failed: {err}"))))?;
 
         let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
+                "openai responses returned status {}: {}",
+                status, body
+            ))));
+        }
+
         let raw: Value = response
             .json()
             .await
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("invalid json response: {err}"))))?;
-
-        if !status.is_success() {
-            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
-                "openai responses returned status {}: {}",
-                status, raw
-            ))));
-        }
 
         from_responses(raw)
     }
@@ -210,28 +214,58 @@ fn flatten_responses_input(request: &ModelRequest) -> Vec<Value> {
         }));
     }
     for msg in &request.messages {
-        let text = msg
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::Text { text } | ContentBlock::System { text } => Some(text.clone()),
-                ContentBlock::Reference { reference } => Some(format!("ref: {reference}")),
-                ContentBlock::ToolResult { tool_name, content, .. } => {
-                    Some(format!("tool_result {tool_name}: {content}"))
+        match msg.kind {
+            crate::message::MessageKind::Tool => {
+                // Tool results must be submitted as function_call_output items.
+                for block in &msg.content {
+                    if let ContentBlock::ToolResult { content, call_id, .. } = block {
+                        items.push(json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": content.to_string(),
+                        }));
+                    }
                 }
-                ContentBlock::ToolCall { tool_name, arguments, .. } => {
-                    Some(format!("tool_call {tool_name}: {arguments}"))
+            }
+            _ => {
+                // Determine role: messages containing ToolCall blocks are assistant turns.
+                let has_tool_calls = msg.content.iter().any(|b| matches!(b, ContentBlock::ToolCall { .. }));
+                let role = if has_tool_calls { "assistant" } else { "user" };
+
+                let mut content_parts: Vec<Value> = Vec::new();
+                for block in &msg.content {
+                    match block {
+                        ContentBlock::Text { text } | ContentBlock::System { text } => {
+                            if !text.trim().is_empty() {
+                                content_parts.push(json!({"type": "input_text", "text": text}));
+                            }
+                        }
+                        ContentBlock::ToolCall { tool_name, arguments, call_id } => {
+                            // Assistant tool call — emit as function_call item.
+                            items.push(json!({
+                                "type": "function_call",
+                                "call_id": call_id.as_deref().unwrap_or(""),
+                                "name": tool_name,
+                                "arguments": arguments.to_string(),
+                            }));
+                        }
+                        ContentBlock::Reference { reference } => {
+                            content_parts.push(json!({"type": "input_text", "text": format!("ref: {reference}")}));
+                        }
+                        ContentBlock::Image { url } => {
+                            content_parts.push(json!({"type": "input_text", "text": format!("image: {url}")}));
+                        }
+                        ContentBlock::ToolResult { .. } => {}
+                    }
                 }
-                ContentBlock::Image { url } => Some(format!("image: {url}")),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !text.trim().is_empty() {
-            items.push(json!({
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": text}],
-            }));
+                if !content_parts.is_empty() {
+                    items.push(json!({
+                        "type": "message",
+                        "role": role,
+                        "content": content_parts,
+                    }));
+                }
+            }
         }
     }
     items
@@ -241,21 +275,48 @@ fn from_responses(raw: Value) -> Result<ModelResponse, FrameworkError> {
     let mut content = Vec::new();
     if let Some(output) = raw.get("output").and_then(Value::as_array) {
         for item in output {
-            if let Some(contents) = item.get("content").and_then(Value::as_array) {
-                for block in contents {
-                    match block.get("type").and_then(Value::as_str) {
-                        Some("output_text") => {
-                            if let Some(text) = block.get("text").and_then(Value::as_str) {
-                                if !text.trim().is_empty() {
-                                    content.push(ContentBlock::Text {
-                                        text: text.to_string(),
-                                    });
+            match item.get("type").and_then(Value::as_str) {
+                Some("message") => {
+                    if let Some(contents) = item.get("content").and_then(Value::as_array) {
+                        for block in contents {
+                            match block.get("type").and_then(Value::as_str) {
+                                Some("output_text") => {
+                                    if let Some(text) = block.get("text").and_then(Value::as_str) {
+                                        if !text.trim().is_empty() {
+                                            content.push(ContentBlock::Text {
+                                                text: text.to_string(),
+                                            });
+                                        }
+                                    }
                                 }
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
                 }
+                Some("function_call") => {
+                    let tool_name = item
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    let arguments_str = item
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}");
+                    let arguments = serde_json::from_str(arguments_str)
+                        .unwrap_or_else(|_| serde_json::json!({ "_raw": arguments_str }));
+                    content.push(ContentBlock::ToolCall {
+                        tool_name,
+                        arguments,
+                        call_id,
+                    });
+                }
+                _ => {}
             }
         }
     }

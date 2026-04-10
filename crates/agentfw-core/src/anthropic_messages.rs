@@ -33,9 +33,15 @@ impl AnthropicMessagesAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(api_key) = &config.api_key {
+            let key = api_key.trim();
+            if key.is_empty() {
+                return Err(FrameworkError::from(ModelAdapterError::Request(
+                    "anthropic api key must not be empty".to_string(),
+                )));
+            }
             headers.insert(
                 "x-api-key",
-                HeaderValue::from_str(api_key).map_err(|err| {
+                HeaderValue::from_str(key).map_err(|err| {
                     ModelAdapterError::Request(format!("invalid anthropic api key header: {err}"))
                 })?,
             );
@@ -89,17 +95,21 @@ impl ModelAdapter for AnthropicMessagesAdapter {
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("request failed: {err}"))))?;
 
         let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
+                "anthropic messages returned status {}: {}",
+                status, body
+            ))));
+        }
+
         let raw: Value = response
             .json()
             .await
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("invalid json response: {err}"))))?;
-
-        if !status.is_success() {
-            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
-                "anthropic messages returned status {}: {}",
-                status, raw
-            ))));
-        }
 
         from_anthropic_response(raw)
     }

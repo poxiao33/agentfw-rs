@@ -169,16 +169,21 @@ where
             if !routes.can_deliver(session, from_agent, &target).await? {
                 continue;
             }
-            messages.push(
-                MessageDraft {
-                    kind: crate::message::MessageKind::Standard,
-                    from: AgentId::from(from_agent.to_string()),
-                    to: AgentId::from(target),
-                    content: content.to_vec(),
-                    meta: Default::default(),
-                }
-                .commit_auto(SessionId::from(session.session_id.0.clone())),
-            );
+            let msg = MessageDraft {
+                kind: crate::message::MessageKind::Standard,
+                from: AgentId::from(from_agent.to_string()),
+                to: AgentId::from(target.clone()),
+                content: content.to_vec(),
+                meta: Default::default(),
+            }
+            .commit_auto(SessionId::from(session.session_id.0.clone()));
+
+            // Write to recipient's history so they receive the message.
+            // Sender outbox is the caller's responsibility (via AppendHistory effect).
+            self.history
+                .append(&session.session_id.0, &target, vec![msg.clone()])?;
+
+            messages.push(msg);
         }
         Ok(messages)
     }

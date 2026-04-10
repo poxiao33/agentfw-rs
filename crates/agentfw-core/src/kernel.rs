@@ -41,10 +41,6 @@ impl Kernel {
         }
     }
 
-    pub fn with_defaults() -> Self {
-        Self::new()
-    }
-
     pub fn builder() -> KernelBuilder {
         KernelBuilder::new()
     }
@@ -124,17 +120,19 @@ impl Kernel {
             .await
     }
 
-    /// Run a full agent turn: execute → apply effects → dispatch content.
+    /// Run a full agent turn: execute → apply audience effects → dispatch → apply remaining effects.
     ///
-    /// # Atomicity
+    /// # Ordering
     ///
-    /// This method is **not atomic**. Effects (history updates, audience changes)
-    /// are applied before content is dispatched. If dispatch fails after effects
-    /// are applied, the stored state will reflect the effects without a
-    /// corresponding dispatched message. Callers requiring stronger consistency
-    /// should use [`Kernel::execute_agent_turn`], [`Kernel::apply_turn_effects`],
-    /// and [`Kernel::dispatch_turn_content`] separately with their own error
-    /// handling.
+    /// `SetAudience` effects are applied before dispatch so that the audience
+    /// updated by a tool call (e.g. `set_visible_to`) is visible to the router.
+    /// All other effects (`AppendHistory`, `ArchivePayload`) are applied only
+    /// after dispatch succeeds, so that a dispatch failure leaves history and
+    /// archive in a consistent state.
+    ///
+    /// Callers requiring finer-grained control can use
+    /// [`Kernel::execute_agent_turn`], [`Kernel::dispatch_turn_content`], and
+    /// [`Kernel::apply_turn_effects`] separately.
     pub async fn run_agent_turn(
         &mut self,
         session: &SessionState,
@@ -145,9 +143,35 @@ impl Kernel {
         let result = self
             .execute_agent_turn(session, resolvers, agent, incoming)
             .await?;
-        self.apply_turn_effects(session, agent, &result)?;
-        self.dispatch_turn_content(session, resolvers, agent, &result)
-            .await
+
+        // Split effects: audience changes must precede dispatch; everything else
+        // is committed only after dispatch succeeds.
+        let (pre_dispatch, post_dispatch): (Vec<_>, Vec<_>) =
+            result.effects.iter().cloned().partition(|e| {
+                matches!(e, crate::state::RuntimeEffect::SetAudience { .. })
+            });
+
+        let pre_result = AgentTurnResult {
+            outbound_content: Vec::new(),
+            effects: pre_dispatch,
+            meta: serde_json::Value::Null,
+        };
+        self.apply_turn_effects(session, agent, &pre_result)?;
+
+        // Dispatch using the updated audience.
+        let dispatched = self
+            .dispatch_turn_content(session, resolvers, agent, &result)
+            .await?;
+
+        // Commit remaining effects only after successful dispatch.
+        let post_result = AgentTurnResult {
+            outbound_content: Vec::new(),
+            effects: post_dispatch,
+            meta: serde_json::Value::Null,
+        };
+        self.apply_turn_effects(session, agent, &post_result)?;
+
+        Ok(dispatched)
     }
 
     pub fn build_static_resolvers(
@@ -157,7 +181,7 @@ impl Kernel {
     ) -> Result<ResolverBundle, FrameworkError> {
         let prompts = config.prompts.clone();
         let models = build_static_models(&config.models)?;
-        let toolsets = build_static_toolsets(&config.tool_bindings, builtin_tools);
+        let toolsets = build_static_toolsets(&config.tool_bindings, builtin_tools)?;
         let rules = build_static_routes(&config.session.agents, &config.session.routes);
         let histories =
             build_static_histories(config.session.id.as_str(), &config.history_bindings);
@@ -399,7 +423,6 @@ mod tests {
     use crate::message::{AgentId, MessageId, MessageKind, MessageMeta, SessionId, Timestamp};
     use crate::model::{ModelCapabilities, ModelRequest, ModelResponse};
     use crate::storage::AudienceStateStore;
-    use crate::SET_VISIBLE_TO_TOOL_ID;
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::Arc;
@@ -538,7 +561,8 @@ mod tests {
             if !saw_tool_result {
                 return Ok(ModelResponse {
                     content: vec![ContentBlock::ToolCall {
-                        tool_name: SET_VISIBLE_TO_TOOL_ID.to_string(),
+                        // The model sees tool.name ("set_visible_to"), not tool.id.
+                        tool_name: "set_visible_to".to_string(),
                         arguments: json!({"visible_to":["agent:analysis"]}),
                         call_id: Some("call-1".to_string()),
                     }],
@@ -712,21 +736,17 @@ mod tests {
     }
 }
 
-fn resolve_api_key(binding: &StaticModelBinding) -> Option<String> {
+fn resolve_api_key(binding: &StaticModelBinding) -> Result<Option<String>, FrameworkError> {
     let env_name = binding.api_key_env.trim();
     if env_name.is_empty() {
-        return None;
+        return Ok(None);
     }
     match env::var(env_name) {
-        Ok(val) => Some(val),
-        Err(_) => {
-            eprintln!(
-                "[agentfw] warning: environment variable '{}' for model '{}' is not set; \
-                 proceeding without API key",
-                env_name, binding.key
-            );
-            None
-        }
+        Ok(val) => Ok(Some(val)),
+        Err(_) => Err(FrameworkError::Config(format!(
+            "environment variable '{}' required for model '{}' is not set",
+            env_name, binding.key
+        ))),
     }
 }
 
@@ -735,7 +755,7 @@ fn build_static_models(
 ) -> Result<HashMap<String, SharedModelAdapter>, FrameworkError> {
     let mut models = HashMap::new();
     for binding in bindings {
-        let api_key = resolve_api_key(binding);
+        let api_key = resolve_api_key(binding)?;
         let adapter: SharedModelAdapter = match binding.provider.as_str() {
             "openai-compatible" | "openai-chat-completions" | "openai-compatible-chat" | "openai" => {
                 Arc::new(OpenAICompatibleAdapter::new(OpenAICompatibleConfig {
@@ -772,7 +792,7 @@ fn build_static_models(
 fn build_static_toolsets(
     bindings: &[StaticToolBinding],
     builtin_tools: &[ToolDefinition],
-) -> HashMap<String, Vec<ToolDefinition>> {
+) -> Result<HashMap<String, Vec<ToolDefinition>>, FrameworkError> {
     let tool_index = builtin_tools
         .iter()
         .map(|tool| (tool.id.clone(), tool.clone()))
@@ -785,17 +805,16 @@ fn build_static_toolsets(
             match tool_index.get(tool_id) {
                 Some(tool) => resolved.push(tool.clone()),
                 None => {
-                    // Log missing tool so developers can catch configuration errors early.
-                    eprintln!(
-                        "[agentfw] warning: tool_id '{}' referenced by agent '{}' not found in builtin_tools; skipping",
+                    return Err(FrameworkError::Config(format!(
+                        "tool_id '{}' referenced by agent '{}' not found in builtin_tools",
                         tool_id, binding.agent_id
-                    );
+                    )));
                 }
             }
         }
         toolsets.insert(binding.agent_id.clone(), resolved);
     }
-    toolsets
+    Ok(toolsets)
 }
 
 fn build_static_routes(

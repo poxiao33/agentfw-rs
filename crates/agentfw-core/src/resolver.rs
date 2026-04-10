@@ -157,18 +157,18 @@ impl ResolverBundle {
         let mut tool_map = HashMap::new();
         let mut tool_schemas = Vec::new();
         for tool in tools {
-            if tool_map.contains_key(&tool.id) {
+            if tool_map.contains_key(&tool.name) {
                 return Err(FrameworkError::Protocol(format!(
-                    "duplicate tool id resolved for agent {}: {}",
-                    agent.id, tool.id
+                    "duplicate tool name resolved for agent {}: {}",
+                    agent.id, tool.name
                 )));
             }
             tool_schemas.push(ModelToolDefinition {
-                name: tool.id.clone(),
+                name: tool.name.clone(),
                 description: tool.description.clone(),
                 input_schema: tool.schema.input_schema.clone(),
             });
-            tool_map.insert(tool.id.clone(), tool);
+            tool_map.insert(tool.name.clone(), tool);
         }
 
         Ok((

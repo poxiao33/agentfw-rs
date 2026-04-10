@@ -16,7 +16,7 @@ pub(crate) fn build_bearer_client(api_key: Option<&str>) -> Result<reqwest::Clie
         }
         let auth = format!("Bearer {key}");
         let value = HeaderValue::from_str(&auth)
-            .map_err(|err| ModelAdapterError::Request(format!("invalid api key header (contains non-ASCII characters): {err}")))?;
+            .map_err(|_| ModelAdapterError::Request("api key contains invalid characters (non-ASCII or control characters)".to_string()))?;
         headers.insert(AUTHORIZATION, value);
     }
     Ok(reqwest::Client::builder()

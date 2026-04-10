@@ -36,7 +36,22 @@ impl AgentDriver for ExternalDriver {
     ) -> Result<AgentTurnResult, FrameworkError> {
         let mut outbound = Vec::new();
         if let Some(last) = incoming.last() {
-            outbound.extend(last.content.clone());
+            for block in &last.content {
+                match block {
+                    // Only forward safe, user-visible content types.
+                    // System, ToolCall, ToolResult, and Reference blocks are stripped to
+                    // prevent prompt injection. Reference blocks are stripped because their
+                    // resolved content is opaque at this layer and could carry injected
+                    // instructions.
+                    ContentBlock::Text { .. } | ContentBlock::Image { .. } => {
+                        outbound.push(block.clone());
+                    }
+                    ContentBlock::ToolResult { .. }
+                    | ContentBlock::ToolCall { .. }
+                    | ContentBlock::System { .. }
+                    | ContentBlock::Reference { .. } => {}
+                }
+            }
         }
         Ok(AgentTurnResult {
             outbound_content: outbound,
@@ -57,7 +72,14 @@ pub type DefaultLlmDriver = LlmDriver;
 ///
 /// This driver prefers `ModelAdapter::stream()` when the adapter supports
 /// streaming and the request does not include tools. Otherwise it falls back to
-/// the default `LlmDriver` behavior.
+/// the full `LlmDriver` behavior (including tool execution and effects).
+///
+/// # Effects
+///
+/// The streaming path does not support tool calls and therefore produces no
+/// `RuntimeEffect`s. If the model or adapter does not support streaming, or if
+/// the request includes tools, this driver delegates to `LlmDriver` which does
+/// accumulate effects.
 pub struct StreamingLlmDriver;
 pub type DefaultStreamingLlmDriver = StreamingLlmDriver;
 
@@ -69,6 +91,11 @@ struct LlmTurnRunner<'a> {
     tools: HashMap<String, ToolDefinition>,
     effects: Vec<RuntimeEffect>,
     tool_round: u32,
+    /// Accumulated text/non-tool content from mixed responses across all tool rounds.
+    accumulated_content: Vec<ContentBlock>,
+    /// Known agent IDs for this session, used to validate set_visible_to targets.
+    /// Sourced from session.metadata["known_agents"] if present.
+    known_agent_ids: Vec<String>,
 }
 
 const MAX_TOOL_ROUNDS: u32 = 20;
@@ -82,6 +109,18 @@ impl<'a> LlmTurnRunner<'a> {
     async fn create(env: RunEnv<'a>, agent: &'a AgentSpec) -> Result<Self, FrameworkError> {
         let (model, request, tools) = env.resolvers.build_request(env.session, agent).await?;
 
+        let known_agent_ids: Vec<String> = env
+            .session
+            .metadata
+            .get("known_agents")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             session_id: &env.session.session_id.0,
             agent_id: &agent.id,
@@ -90,6 +129,8 @@ impl<'a> LlmTurnRunner<'a> {
             tools,
             effects: Vec::new(),
             tool_round: 0,
+            accumulated_content: Vec::new(),
+            known_agent_ids,
         })
     }
 
@@ -119,17 +160,32 @@ impl<'a> LlmTurnRunner<'a> {
 
     async fn request_step(&self) -> Result<AgentStep, FrameworkError> {
         let response = self.model.send(self.request.clone()).await?;
-        DefaultProtocolNormalizer.normalize(response, self.agent_id)
+        // Include tool_round in the requester ID so auto-generated call IDs are
+        // unique across rounds (prevents collisions when idx resets to 0 each round).
+        let requester = format!("{}-r{}", self.agent_id, self.tool_round);
+        DefaultProtocolNormalizer.normalize(response, &requester)
     }
 
-    fn classify_step(&self, step: AgentStep) -> Result<StepDisposition, FrameworkError> {
+    fn classify_step(&mut self, step: AgentStep) -> Result<StepDisposition, FrameworkError> {
         if step.tool_calls.is_empty() {
+            // Merge any content accumulated from prior mixed rounds with this final round.
+            let mut final_content = std::mem::take(&mut self.accumulated_content);
+            final_content.extend(step.outbound_content);
+            let merged_step = AgentStep {
+                outbound_content: final_content,
+                tool_calls: Vec::new(),
+                need_retry: step.need_retry,
+                retry_hint: step.retry_hint,
+                meta: step.meta,
+            };
             return Ok(StepDisposition::Finished(finalize_turn(
-                step,
+                merged_step,
                 &self.effects,
             )?));
         }
 
+        // Mixed response: preserve any non-tool content before continuing with tool calls.
+        self.accumulated_content.extend(step.outbound_content);
         Ok(StepDisposition::ContinueWithTools(step.tool_calls))
     }
 
@@ -143,10 +199,11 @@ impl<'a> LlmTurnRunner<'a> {
 
         for tool_call in tool_calls {
             let tool = self.resolve_tool(&tool_call)?.clone();
-            match tool.executor.execute(repair_tool_call(tool_call)).await {
+            let enriched = self.enrich_tool_call(repair_tool_call(tool_call.clone()));
+            match tool.executor.execute(enriched).await {
                 Ok(result) => {
                     self.effects.extend(result.effects.clone());
-                    tool_result_blocks.push(tool_result_block(&tool, &result));
+                    tool_result_blocks.push(tool_result_block(&tool_call, &tool, &result));
                 }
                 Err(err) => {
                     // Roll back any effects accumulated in this round.
@@ -167,12 +224,34 @@ impl<'a> LlmTurnRunner<'a> {
             )));
         }
 
+        // tool_map is keyed by tool.name (what the model sees), not tool.id.
         self.tools.get(&tool_call.tool_id).ok_or_else(|| {
             FrameworkError::Protocol(format!(
-                "tool not resolved for agent {}: {}",
+                "tool not resolved for agent {}: '{}' (check that tool name matches a registered tool)",
                 self.agent_id, tool_call.tool_id
             ))
         })
+    }
+
+    /// Inject session context into the tool call's meta so executors can validate inputs.
+    /// Currently injects `known_agents` for audience validation.
+    fn enrich_tool_call(&self, mut call: ToolCall) -> ToolCall {
+        if !self.known_agent_ids.is_empty() {
+            if let Some(obj) = call.meta.as_object_mut() {
+                obj.insert(
+                    "known_agents".to_string(),
+                    serde_json::Value::Array(
+                        self.known_agent_ids
+                            .iter()
+                            .map(|id| serde_json::Value::String(id.clone()))
+                            .collect(),
+                    ),
+                );
+            } else {
+                call.meta = serde_json::json!({ "known_agents": self.known_agent_ids });
+            }
+        }
+        call
     }
 }
 
@@ -191,6 +270,8 @@ impl StreamingLlmTurnRunner {
         let model = self.model;
         let request = self.request;
 
+        // Fall back to the full LlmTurnRunner (with tool support and effects) when
+        // streaming is not available or tools are present.
         if !model.capabilities().supports_streaming || !request.tools.is_empty() {
             let response = model.send(request).await?;
             let step = DefaultProtocolNormalizer.normalize(response, "stream-fallback")?;
@@ -278,16 +359,12 @@ fn repair_tool_call(tool_call: ToolCall) -> ToolCall {
     }
 }
 
-fn tool_result_block(tool: &ToolDefinition, result: &crate::tool::ToolResult) -> ContentBlock {
+fn tool_result_block(call: &ToolCall, tool: &ToolDefinition, result: &crate::tool::ToolResult) -> ContentBlock {
     ContentBlock::ToolResult {
-        tool_name: tool.id.clone(),
+        tool_name: tool.name.clone(),
         content: tool_result_content(result),
-        call_id: result
-            .meta
-            .get("call_id")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
+        // Use the originating call_id as the authoritative source, not result.meta.
+        call_id: call.call_id.clone(),
         status: match result.status {
             ToolStatus::Success => ToolResultStatus::Success,
             ToolStatus::Error => ToolResultStatus::Error,

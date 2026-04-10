@@ -34,7 +34,11 @@ pub use model::*;
 pub use openai_compatible::*;
 pub use openai_responses::*;
 pub use protocol::*;
-pub use resolver::*;
+pub use resolver::{
+    HistoryTransform, MemoryResolver, ModelResolver, NoopHistoryTransform, PromptPayload,
+    PromptResolver, ResolverBundle, ResolverBundleBuilder, RouteResolver, StaticRouteTable,
+    ToolResolver,
+};
 pub use runtime::{AgentDriver, AgentTurnResult, RunEnv, Runtime};
 pub use state::*;
 pub use storage::{HistoryStore, ArchiveStore, AudienceStateStore};

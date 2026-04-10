@@ -24,7 +24,14 @@ pub enum AudienceOnMissing {
 
 impl Default for AudienceOnMissing {
     fn default() -> Self {
-        Self::Error
+        // Default to an empty audience rather than an error so that dispatch_content
+        // does not hard-fail when audience state has not been explicitly initialized.
+        // Agents with no audience simply produce no delivered messages.
+        Self::UseState {
+            state: AudienceState {
+                visible_to: Vec::new(),
+            },
+        }
     }
 }
 

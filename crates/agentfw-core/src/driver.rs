@@ -37,6 +37,12 @@ impl DriverRegistry for InMemoryDriverRegistry {
         key: String,
         driver: Box<dyn AgentDriver>,
     ) -> Result<(), FrameworkError> {
+        if self.drivers.contains_key(&key) {
+            return Err(FrameworkError::Config(format!(
+                "driver already registered for key '{}'; use a unique key or remove the existing registration",
+                key
+            )));
+        }
         self.drivers.insert(key, driver);
         Ok(())
     }

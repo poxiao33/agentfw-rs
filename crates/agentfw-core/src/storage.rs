@@ -99,6 +99,12 @@ impl InMemoryArchiveStore {
 
 impl ArchiveStore for InMemoryArchiveStore {
     fn save(&mut self, reference: &str, payload: &str) -> Result<(), FrameworkError> {
+        if self.data.contains_key(reference) {
+            return Err(FrameworkError::Store(format!(
+                "archive reference already exists: '{}'; use a unique reference or remove the existing entry",
+                reference
+            )));
+        }
         self.data.insert(reference.to_string(), payload.to_string());
         Ok(())
     }

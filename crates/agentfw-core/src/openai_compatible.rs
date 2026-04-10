@@ -65,17 +65,21 @@ impl ModelAdapter for OpenAIChatCompletionsAdapter {
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("request failed: {err}"))))?;
 
         let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
+                "openai chat completions returned status {}: {}",
+                status, body
+            ))));
+        }
+
         let raw: Value = response
             .json()
             .await
             .map_err(|err| FrameworkError::from(ModelAdapterError::Request(format!("invalid json response: {err}"))))?;
-
-        if !status.is_success() {
-            return Err(FrameworkError::from(ModelAdapterError::Request(format!(
-                "openai chat completions returned status {}: {}",
-                status, raw
-            ))));
-        }
 
         from_chat_response(raw)
     }
