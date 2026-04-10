@@ -6,12 +6,23 @@
 
 ## What You Can Build With It
 
-- **Multi-LLM collaboration systems** — wire multiple LLM agents together to pass messages and complete tasks cooperatively
-- **Tool-calling pipelines** — build agents that automatically execute tools and feed results back to the model in a loop
-- **Hybrid agent systems** — model LLMs, external APIs, and human input uniformly as agents and compose them freely
-- **Streaming conversation apps** — use the built-in streaming driver to build real-time responsive dialogue systems
-- **Configurable agent labs** — rapidly prototype and debug multi-agent topologies via TOML/JSON static config
-- **Custom execution strategies** — implement your own Driver or ModelAdapter to plug in any model or execution logic
+**Coding agent CLIs** (like Claude Code or Codex CLI)
+The built-in `ToolLoopLlmDriver` handles the tool loop and `StreamingLlmDriver` handles streaming output. Implement a few tools — `read_file`, `write_file`, `bash_exec` — wrap them in a REPL loop, and you have a terminal AI assistant that can read, write, and execute code.
+
+**Multi-agent collaboration systems**
+Model multiple LLM instances as independent agents, control message visibility with `AudienceState`, and build Planner → Worker → Reviewer topologies where agents divide and coordinate work.
+
+**Tool-augmented chatbots**
+Use `ToolLoopLlmDriver` to build conversational systems that automatically call external APIs, query databases, or run computations — tool results feed back to the model until the task is done.
+
+**Streaming AI applications**
+Use `StreamingLlmDriver` with the Anthropic or OpenAI Responses adapters to build real-time streaming terminal or server-side applications.
+
+**Configurable agent labs**
+Define agent topologies, model bindings, and tool sets via TOML/JSON static config — no code changes needed to restructure the system, ideal for rapid experimentation and prototyping.
+
+**Custom runtimes**
+Implement your own `AgentDriver` or `ModelAdapter` to plug in private models, local inference engines, or fully custom execution logic.
 
 ## Design Philosophy
 

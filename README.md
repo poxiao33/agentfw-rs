@@ -6,12 +6,23 @@
 
 ## 你可以用它构建什么
 
-- **多 LLM 协作系统** — 让多个 LLM Agent 互相传递消息、协同完成任务
-- **工具调用流水线** — 构建带工具循环的 Agent，自动执行工具并将结果反馈给模型
-- **混合 Agent 系统** — 将 LLM、外部 API、人类输入统一建模为 Agent，自由组合
-- **流式对话应用** — 利用内置流式 Driver 构建实时响应的对话系统
-- **可配置的 Agent 实验室** — 通过 TOML/JSON 静态配置快速搭建和调试多 Agent 拓扑
-- **自定义执行策略** — 实现自己的 Driver 或 ModelAdapter，接入任意模型或执行逻辑
+**编码 Agent CLI**（类似 Claude Code、Codex CLI）
+框架内置的 `ToolLoopLlmDriver` 负责工具循环，`StreamingLlmDriver` 负责流式输出，你只需实现 `read_file`、`write_file`、`bash_exec` 等工具，再套一个 REPL 循环，就能得到一个可以读写代码、执行命令的终端 AI 助手。
+
+**多 Agent 协作系统**
+将多个 LLM 实例建模为独立 Agent，通过 `AudienceState` 控制消息可见性，构建 Planner → Worker → Reviewer 这类分工协作的 Agent 拓扑。
+
+**带工具的对话机器人**
+利用 `ToolLoopLlmDriver` 构建能自动调用外部 API、查询数据库、执行计算的对话系统，工具结果自动反馈给模型直到任务完成。
+
+**流式 AI 应用**
+通过 `StreamingLlmDriver` 和 Anthropic / OpenAI Responses 适配器，构建实时流式响应的终端或服务端应用。
+
+**可配置的 Agent 实验室**
+通过 TOML/JSON 静态配置快速定义 Agent 拓扑、模型绑定、工具集，无需改代码即可调整系统结构，适合快速实验和原型验证。
+
+**自定义运行时**
+实现自己的 `AgentDriver` 或 `ModelAdapter`，接入私有模型、本地推理引擎，或完全自定义的执行逻辑。
 
 ## 设计理念
 
