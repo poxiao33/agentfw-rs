@@ -24,6 +24,9 @@
 **自定义运行时**
 实现自己的 `AgentDriver` 或 `ModelAdapter`，接入私有模型、本地推理引擎，或完全自定义的执行逻辑。
 
+**Agent 测试 Harness**
+将真实 `ModelAdapter` 替换为确定性 Mock，通过 `ExternalDriver` 注入预设输入，用静态配置定义测试场景，执行后断言 `HistoryStore` 中的消息序列——构建可重复、可自动化的 Agent 行为测试框架。
+
 ## 设计理念
 
 | 原则 | 说明 |

@@ -24,6 +24,9 @@ Define agent topologies, model bindings, and tool sets via TOML/JSON static conf
 **Custom runtimes**
 Implement your own `AgentDriver` or `ModelAdapter` to plug in private models, local inference engines, or fully custom execution logic.
 
+**Agent testing harnesses**
+Swap the real `ModelAdapter` for a deterministic mock, inject scripted inputs via `ExternalDriver`, define test scenarios in static config, then assert against the message sequence in `HistoryStore` — build repeatable, automatable test frameworks for agent behavior.
+
 ## Design Philosophy
 
 | Principle | Description |
